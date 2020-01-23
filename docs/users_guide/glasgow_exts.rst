@@ -5476,7 +5476,7 @@ Pattern synonyms
 .. extension:: PatternSynonyms
     :shortdesc: Enable pattern synonyms.
 
-    :since: 7.8.1
+    :since: 8.0.1
 
     Allow the definition of pattern synonyms.
 
