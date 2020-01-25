@@ -329,9 +329,9 @@ extendIdZonkEnv :: ZonkEnv -> Var -> ZonkEnv
 extendIdZonkEnv ze@(ZonkEnv { ze_id_env = id_env }) id
   = ze { ze_id_env = extendVarEnv id_env id id }
 
-extendTyZonkEnv :: ZonkEnv -> TyVar -> TyVar -> ZonkEnv
-extendTyZonkEnv ze@(ZonkEnv { ze_tv_env = ty_env }) tv tv'
-  = ze { ze_tv_env = extendVarEnv ty_env tv tv' }
+extendTyZonkEnv :: ZonkEnv -> TyVar -> ZonkEnv
+extendTyZonkEnv ze@(ZonkEnv { ze_tv_env = ty_env }) tv
+  = ze { ze_tv_env = extendVarEnv ty_env tv tv }
 
 setZonkType :: ZonkEnv -> ZonkFlexi -> ZonkEnv
 setZonkType ze flexi = ze { ze_flexi = flexi }
@@ -436,12 +436,16 @@ zonkTyBndrsX = mapAccumLM zonkTyBndrX
 zonkTyBndrX :: ZonkEnv -> TcTyVar -> TcM (ZonkEnv, TyVar)
 -- This guarantees to return a TyVar (not a TcTyVar)
 -- then we add it to the envt, so all occurrences are replaced
+--
+-- It does not clone: the new TyVar has the sane Name
+-- as the old one.  This important when zonking the
+-- TyVarBndrs of a TyCon, whose Names may scope.
 zonkTyBndrX env tv
   = ASSERT2( isImmutableTyVar tv, ppr tv <+> dcolon <+> ppr (tyVarKind tv) )
     do { ki <- zonkTcTypeToTypeX env (tyVarKind tv)
                -- Internal names tidy up better, for iface files.
        ; let tv' = mkTyVar (tyVarName tv) ki
-       ; return (extendTyZonkEnv env tv tv', tv') }
+       ; return (extendTyZonkEnv env tv', tv') }
 
 zonkTyVarBinders ::  [VarBndr TcTyVar vis]
                  -> TcM (ZonkEnv, [VarBndr TyVar vis])

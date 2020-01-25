@@ -2036,99 +2036,102 @@ kcCheckDeclHeader_sig
   -> LHsQTyVars GhcRn  -- ^ Binders in the header
   -> TcM ContextKind   -- ^ The result kind. AnyKind == no result signature
   -> TcM TcTyCon       -- ^ A suitably-kinded TcTyCon
-kcCheckDeclHeader_sig kisig name flav ktvs kc_res_ki =
-  addTyConFlavCtxt name flav $
-    pushTcLevelM_ $
-    solveEqualities $  -- #16687
-    bind_implicit (hsq_ext ktvs) $ \implicit_tcv_prs -> do
+kcCheckDeclHeader_sig kisig name flav
+          (HsQTvs { hsq_ext      = implicit_nms
+                  , hsq_explicit = explicit_nms }) kc_res_ki
+  = do {  -- Step 1: zip user-written binders with quantifiers from the kind signature.
+          -- For example:
+          --
+          --   type F :: forall k -> k -> forall j. j -> Type
+          --   data F i a b = ...
+          --
+          -- Results in the following 'zipped_binders':
+          --
+          --                   TyBinder      LHsTyVarBndr
+          --    ---------------------------------------
+          --    ZippedBinder   forall k ->   i
+          --    ZippedBinder   k ->          a
+          --    ZippedBinder   forall j.
+          --    ZippedBinder   j ->          b
+          --
+          let (zipped_binders, excess_bndrs, kisig') = zipBinders kisig explicit_nms
 
-      -- Step 1: zip user-written binders with quantifiers from the kind signature.
-      -- For example:
-      --
-      --   type F :: forall k -> k -> forall j. j -> Type
-      --   data F i a b = ...
-      --
-      -- Results in the following 'zipped_binders':
-      --
-      --                   TyBinder      LHsTyVarBndr
-      --    ---------------------------------------
-      --    ZippedBinder   forall k ->   i
-      --    ZippedBinder   k ->          a
-      --    ZippedBinder   forall j.
-      --    ZippedBinder   j ->          b
-      --
-      let (zipped_binders, excess_bndrs, kisig') = zipBinders kisig (hsq_explicit ktvs)
+          -- Report binders that don't have a corresponding quantifier.
+          -- For example:
+          --
+          --   type T :: Type -> Type
+          --   data T b1 b2 b3 = ...
+          --
+          -- Here, b1 is zipped with Type->, while b2 and b3 are excess binders.
+          --
+        ; unless (null excess_bndrs) $ failWithTc (tooManyBindersErr kisig' excess_bndrs)
 
-      -- Report binders that don't have a corresponding quantifier.
-      -- For example:
-      --
-      --   type T :: Type -> Type
-      --   data T b1 b2 b3 = ...
-      --
-      -- Here, b1 is zipped with Type->, while b2 and b3 are excess binders.
-      --
-      unless (null excess_bndrs) $ failWithTc (tooManyBindersErr kisig' excess_bndrs)
+          -- Convert each ZippedBinder to TyConBinder        for  tyConBinders
+          --                       and to [(Name, TcTyVar)]  for  tcTyConScopedTyVars
+        ; (vis_tcbs, concat -> explicit_tv_prs) <- mapAndUnzipM zipped_to_tcb zipped_binders
 
-      -- Convert each ZippedBinder to TyConBinder        for  tyConBinders
-      --                       and to [(Name, TcTyVar)]  for  tcTyConScopedTyVars
-      (vis_tcbs, concat -> explicit_tv_prs) <- mapAndUnzipM zipped_to_tcb zipped_binders
+        ; (implicit_tvs, (invis_binders, r_ki))
+             <- addTyConFlavCtxt name flav $
+                pushTcLevelM_ $
+                solveEqualities $  -- #16687
+                bindImplicitTKBndrs_Tv implicit_nms $
+                tcExtendNameTyVarEnv explicit_tv_prs  $
+                do { -- Check that inline kind annotations on binders are valid.
+                     -- For example:
+                     --
+                     --   type T :: Maybe k -> Type
+                     --   data T (a :: Maybe j) = ...
+                     --
+                     -- Here we unify   Maybe k ~ Maybe j
+                     mapM_ check_zipped_binder zipped_binders
 
-      tcExtendNameTyVarEnv explicit_tv_prs $ do
+                     -- Kind-check the result kind annotation, if present:
+                     --
+                     --    data T a b :: res_ki where
+                     --               ^^^^^^^^^
+                     -- We do it here because at this point the environment has been
+                     -- extended with both 'implicit_tcv_prs' and 'explicit_tv_prs'.
+                   ; ctx_k <- kc_res_ki
+                   ; m_res_ki <- case ctx_k of
+                                  AnyKind -> return Nothing
+                                  _ -> Just <$> newExpectedKind ctx_k
 
-        -- Check that inline kind annotations on binders are valid.
-        -- For example:
-        --
-        --   type T :: Maybe k -> Type
-        --   data T (a :: Maybe j) = ...
-        --
-        -- Here we unify   Maybe k ~ Maybe j
-        mapM_ check_zipped_binder zipped_binders
+                     -- Step 2: split off invisible binders.
+                     -- For example:
+                     --
+                     --   type F :: forall k1 k2. (k1, k2) -> Type
+                     --   type family F
+                     --
+                     -- Does 'forall k1 k2' become a part of 'tyConBinders' or 'tyConResKind'?
+                     -- See Note [Arity inference in kcCheckDeclHeader_sig]
+                   ; let (invis_binders, r_ki) = split_invis kisig' m_res_ki
 
-        -- Kind-check the result kind annotation, if present:
-        --
-        --    data T a b :: res_ki where
-        --               ^^^^^^^^^
-        -- We do it here because at this point the environment has been
-        -- extended with both 'implicit_tcv_prs' and 'explicit_tv_prs'.
-        m_res_ki <- kc_res_ki >>= \ctx_k ->
-          case ctx_k of
-            AnyKind -> return Nothing
-            _ -> Just <$> newExpectedKind ctx_k
+                     -- Check that the inline result kind annotation is valid.
+                     -- For example:
+                     --
+                     --   type T :: Type -> Maybe k
+                     --   type family T a :: Maybe j where
+                     --
+                     -- Here we unify   Maybe k ~ Maybe j
+                   ; whenIsJust m_res_ki $ \res_ki ->
+                      discardResult $ -- See Note [discardResult in kcCheckDeclHeader_sig]
+                      unifyKind Nothing r_ki res_ki
 
-        -- Step 2: split off invisible binders.
-        -- For example:
-        --
-        --   type F :: forall k1 k2. (k1, k2) -> Type
-        --   type family F
-        --
-        -- Does 'forall k1 k2' become a part of 'tyConBinders' or 'tyConResKind'?
-        -- See Note [Arity inference in kcCheckDeclHeader_sig]
-        let (invis_binders, r_ki) = split_invis kisig' m_res_ki
-
-        -- Convert each invisible TyCoBinder to TyConBinder for tyConBinders.
-        invis_tcbs <- mapM invis_to_tcb invis_binders
-
-        -- Check that the inline result kind annotation is valid.
-        -- For example:
-        --
-        --   type T :: Type -> Maybe k
-        --   type family T a :: Maybe j where
-        --
-        -- Here we unify   Maybe k ~ Maybe j
-        whenIsJust m_res_ki $ \res_ki ->
-          discardResult $ -- See Note [discardResult in kcCheckDeclHeader_sig]
-          unifyKind Nothing r_ki res_ki
+                   ; return (invis_binders, r_ki) }
 
         -- Zonk the implicitly quantified variables.
-naughty naughty
-        implicit_tv_prs <- mapSndM zonkTcTyVarToTyVar implicit_tcv_prs
+        ; implicit_tvs <- mapM zonkTcTyVarToTyVar implicit_tvs
+
+        -- Convert each invisible TyCoBinder to TyConBinder for tyConBinders.
+        ; invis_tcbs <- mapM invis_to_tcb invis_binders
 
         -- Build the final, generalized TcTyCon
-        let tcbs       = vis_tcbs ++ invis_tcbs
-            all_tv_prs = implicit_tv_prs ++ explicit_tv_prs
-            tc = mkTcTyCon name tcbs r_ki all_tv_prs True flav
+        ; let tcbs            = vis_tcbs ++ invis_tcbs
+              implicit_tv_prs = implicit_nms `zip` implicit_tvs
+              all_tv_prs      = implicit_tv_prs ++ explicit_tv_prs
+              tc = mkTcTyCon name tcbs r_ki all_tv_prs True flav
 
-        traceTc "kcCheckDeclHeader_sig done:" $ vcat
+        ; traceTc "kcCheckDeclHeader_sig done:" $ vcat
           [ text "tyConName = " <+> ppr (tyConName tc)
           , text "kisig =" <+> debugPprType kisig
           , text "tyConKind =" <+> debugPprType (tyConKind tc)
@@ -2136,7 +2139,7 @@ naughty naughty
           , text "tcTyConScopedTyVars" <+> ppr (tcTyConScopedTyVars tc)
           , text "tyConResKind" <+> debugPprType (tyConResKind tc)
           ]
-        return tc
+        ; return tc }
   where
     -- Consider this declaration:
     --
@@ -2206,14 +2209,6 @@ naughty naughty
       MASSERT(null stv)
       return tcb
 
-    -- similar to:  bindImplicitTKBndrs_Tv
-    bind_implicit :: [Name] -> ([(Name,TcTyVar)] -> TcM a) -> TcM a
-    bind_implicit tv_names thing_inside =
-      do { let new_tv name = do { tcv <- cloneFlexiKindedTyVarTyVar name
-                                ; return (name, tcv) }
-         ; tcvs <- mapM new_tv tv_names
-         ; tcExtendNameTyVarEnv tcvs (thing_inside tcvs) }
-
     -- Check that the inline kind annotation on a binder is valid
     -- by unifying it with the kind of the quantifier.
     check_zipped_binder :: ZippedBinder -> TcM ()
@@ -2242,6 +2237,8 @@ naughty naughty
           n_sig_invis_bndrs = invisibleTyBndrCount sig_ki
           n_inst = n_sig_invis_bndrs - n_res_invis_bndrs
       in splitPiTysInvisibleN n_inst sig_ki
+
+kcCheckDeclHeader_sig _ _ _ (XLHsQTyVars nec) _ = noExtCon nec
 
 -- A quantifier from a kind signature zipped with a user-written binder for it.
 data ZippedBinder =

@@ -774,15 +774,17 @@ swizzleTcTyConBndrs tc_infos
     -- Here k1 and k2 start as TyVarTvs, and get unified with each other
     -- If this happens, things get very confused later, so fail fast
     check_duplicate_tc_binders :: TcM ()
-    check_duplicate_tc_binders
-      = unless (null err_prs) $
-        do { mapM_ report_dup err_prs; failM }
+    check_duplicate_tc_binders = unless (null err_prs) $
+                                 do { mapM_ report_dup err_prs; failM }
 
     -------------- Error reporting ------------
     err_prs :: [(Name,Name)]
     err_prs = [ (n1,n2)
               | pr :| prs <- findDupsEq ((==) `on` snd) swizzle_prs
               , (n1,_):(n2,_):_ <- [nubBy ((==) `on` fst) (pr:prs)] ]
+              -- This nubBy avoids bogus error reports when we have
+              --    [("f", f), ..., ("f",f)....] in swizzle_prs
+              -- which happens with  class C f where { type T f }
 
     report_dup :: (Name,Name) -> TcM ()
     report_dup (n1,n2)
@@ -793,8 +795,8 @@ swizzleTcTyConBndrs tc_infos
              = quotes (ppr n1) <+> text "and" <+> quotes (ppr n2)
              | otherwise -- Same OccNames! See C2 in
                          -- Note [Swizzling the tyvars before generaliseTcTyCon]
-             = vcat [ ppr n1 <+> text "bound at" <+> ppr (getSrcLoc n1)
-                    , ppr n2 <+> text "bound at" <+> ppr (getSrcLoc n2) ]
+             = vcat [ quotes (ppr n1) <+> text "bound at" <+> ppr (getSrcLoc n1)
+                    , quotes (ppr n2) <+> text "bound at" <+> ppr (getSrcLoc n2) ]
 
     -------------- The swizzler ------------
     -- This does a deep traverse, simply doing a
