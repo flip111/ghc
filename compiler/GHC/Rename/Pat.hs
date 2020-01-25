@@ -465,7 +465,7 @@ rnPatAndThen mk p@(ViewPat x expr pat)
        -- ; return (ViewPat expr' pat' ty) }
        ; return (ViewPat x expr' pat') }
 
-rnPatAndThen mk (ConPatIn con stuff)
+rnPatAndThen mk (ConPat con stuff NoExtField)
    -- rnConPatAndThen takes care of reconstructing the pattern
    -- The pattern for the empty list needs to be replaced by an empty explicit list pattern when overloaded lists is turned on.
   = case unLoc con == nameRdrName (dataConName nilDataCon) of
@@ -514,7 +514,7 @@ rnConPatAndThen :: NameMaker
 rnConPatAndThen mk con (PrefixCon pats)
   = do  { con' <- lookupConCps con
         ; pats' <- rnLPatsAndThen mk pats
-        ; return (ConPatIn con' (PrefixCon pats')) }
+        ; return (ConPat con' (PrefixCon pats') NoExtField) }
 
 rnConPatAndThen mk con (InfixCon pat1 pat2)
   = do  { con' <- lookupConCps con
@@ -526,7 +526,7 @@ rnConPatAndThen mk con (InfixCon pat1 pat2)
 rnConPatAndThen mk con (RecCon rpats)
   = do  { con' <- lookupConCps con
         ; rpats' <- rnHsRecPatsAndThen mk con' rpats
-        ; return (ConPatIn con' (RecCon rpats')) }
+        ; return (ConPat con' (RecCon rpats') NoExtField) }
 
 checkUnusedRecordWildcardCps :: SrcSpan -> Maybe [Name] -> CpsRn ()
 checkUnusedRecordWildcardCps loc dotdot_names =
