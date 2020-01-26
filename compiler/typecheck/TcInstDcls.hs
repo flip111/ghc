@@ -1555,7 +1555,7 @@ tcMethods dfun_id clas tyvars dfun_ev_vars inst_tys
                -> TcM (TcId, LHsBind GhcTc, Maybe Implication)
 
     tc_default sel_id (Just (dm_name, _))
-      = do { (meth_bind, inline_prags) <- mkDefMethBind clas inst_tys sel_id dm_name
+      = do { (meth_bind, inline_prags) <- mkDef make sure this is the right directionMethBind clas inst_tys sel_id dm_name
            ; tcMethodBody clas tyvars dfun_ev_vars inst_tys
                           dfun_ev_binds is_derived hs_sig_fn
                           spec_inst_prags inline_prags

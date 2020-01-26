@@ -303,13 +303,13 @@ checkFamInstConsistency :: [Module] -> TcM ()
 checkFamInstConsistency directlyImpMods
   = do { dflags     <- getDynFlags
        ; (eps, hpt) <- getEpsAndHpt
-       ; traceTc "checkFamInstConsistency" (ppr directlyImpMods)
+       ; traceTc "checkFamInstConsiscy" (ppr directlyImpMods)
        ; let { -- Fetch the iface of a given module.  Must succeed as
                -- all directly imported modules must already have been loaded.
                modIface mod =
                  case lookupIfaceByModule dflags hpt (eps_PIT eps) mod of
-                   Nothing    -> panicDoc "FamInst.checkFamInstConsistency"
-                                          (ppr mod $$ pprHPT hpt)
+                   Nothing    -> panicDoc "FamInst.checkFamInstConsiscy"
+                                          (ppr mod )
                    Just iface -> iface
 
                -- Which family instance modules were checked for consistency

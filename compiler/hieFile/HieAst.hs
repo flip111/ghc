@@ -39,6 +39,7 @@ import Var                        ( Id, Var, setVarName, varName, varType )
 import TcRnTypes
 import MkIface                    ( mkIfaceExports )
 import Panic
+import FastString
 
 import HieTypes
 import HieUtils
@@ -234,7 +235,7 @@ mkHieFile ms ts rs = do
       , hie_asts = asts'
       -- mkIfaceExports sorts the AvailInfos for stability
       , hie_exports = mkIfaceExports (tcg_exports ts)
-      , hie_hs_src = src
+      , hie_hs_src = mkFastStringByteString src
       }
 
 getCompressedAsts :: TypecheckedSource -> RenamedSource
